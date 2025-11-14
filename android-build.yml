@@ -1,0 +1,65 @@
+name: Android CI - Build APK
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        buildType: [assembleDebug, assembleRelease]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*','**/gradle-wrapper.properties') }}
+
+      - name: Show Java version
+        run: java -version
+
+      - name: Prepare keystore (if provided and release build)
+        if: ${{ secrets.ANDROID_KEYSTORE && matrix.buildType == 'assembleRelease' }}
+        run: |
+          echo "${{ secrets.ANDROID_KEYSTORE }}" | base64 --decode > ./keystore.jks
+          echo "Keystore written."
+
+      - name: Set signing env (if release)
+        if: ${{ secrets.ANDROID_KEYSTORE && matrix.buildType == 'assembleRelease' }}
+        run: |
+          echo "KEYSTORE_PASSWORD=${{ secrets.KEYSTORE_PASSWORD }}" >> $GITHUB_ENV
+          echo "KEY_ALIAS=${{ secrets.KEY_ALIAS }}" >> $GITHUB_ENV
+          echo "KEY_PASSWORD=${{ secrets.KEY_PASSWORD }}" >> $GITHUB_ENV
+
+      - name: Build with Gradle (tries wrapper, falls back to system gradle)
+        run: |
+          if [ -f ./gradlew ]; then
+            chmod +x ./gradlew
+            ./gradlew ${{ matrix.buildType }} --no-daemon
+          else
+            echo "gradlew not found, trying system gradle"
+            gradle ${{ matrix.buildType }} --no-daemon
+          fi
+
+      - name: Upload APK artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-apks-${{ matrix.buildType }}
+          path: app/build/outputs/apk/**/**/*.apk
